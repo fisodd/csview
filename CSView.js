@@ -37,6 +37,7 @@ C.strings = {
   'textChartWith'  : " with ",
   'textChartOver'  : " over ",
   'textFilterWhere': " where ",
+  'textFilePrefix' : "CSView",
 
   'baseField' : "Criteria: Field...",
   'baseValue' : "Criteria: Value...",
@@ -1133,10 +1134,13 @@ function tabulate() {
   var tabledata = G.rows.slice(0, V.rowlimit);
 
   // Take away any existing table or text
-  d3.select('div.display').selectAll('*').remove();
+  d3.select('div.display').selectAll('*')
+    .remove()
+  ;
 
   d3.select('div.display').append('p')
-    .text(title);
+    .text(title)
+  ;
 
   // Set up to build a new table
   var table = d3.select('div.display').append('table');
@@ -1156,30 +1160,23 @@ function tabulate() {
   ;
 
   // append the header row
+  var sort_class = V.sortAscending ? 'aes' : 'des';
   thead.append('tr')
     .selectAll('th')
     .data(columns).enter()
     .append('th')
       .text(getFn())
+      .classed(sort_class, testFn(V.sort))
       .style('cursor', 'pointer')
-      .on('click', function(col) {
-        if (V.sortAscending) {
-          d3.select('table.result-table').selectAll('th').filter(function(x){ return x === col; }).attr('class', 'aes');
-          V.sortAscending = false;
-        } else {
-          d3.select('table.result-table').selectAll('th').filter(function(x){ return x === col; }).attr('class', 'des');
-          V.sortAscending = true;
-        }
-
-        V.sort = col;
-        update_view();
-      });
+      .on('click', sortByCol)
+  ;
 
   // create a row for each object in the data
   var rows = tbody.selectAll('tr')
     .data(tabledata)
     .enter()
-    .append('tr');
+    .append('tr')
+  ;
 
   // create a cell in each row for each column
   rows.selectAll('td')
@@ -1199,7 +1196,8 @@ function tabulate() {
 
 // Stringify
 // -- given a value and the name of its column, return a "pretty" version
-function stringify(value, col_name) {
+//
+function stringify(value, col_name, quotes) {
   if (!isValid(value)) {
     value = '';
   }
@@ -1207,33 +1205,39 @@ function stringify(value, col_name) {
   var val;
   switch (info.type) {
   case 'number':
-    if (!isValid(value)) {
-      val = '';
+    val = value.toString();
+    break;
+  case 'date':
+    if (isValid(info.dateFormat)) {
+      var then = new Date();
+      then.setTime(value);
+      val = info.dateFormat(then);
     } else {
       val = value.toString();
     }
     break;
-  case 'date':
-    if (!isValid(value)) {
-      val = '';
-    } else {
-      if (isValid(info.dateFormat)) {
-        var x = new Date();
-        x.setTime(value);
-        val = info.dateFormat(x);
-      } else {
-        val = value.toString();
-      }
-    }
-    break;
   default:
-    if (!isValid(value)) {
-      val = '';
-    } else {
-      val = value;
+    val = value;
+    if (isValid(quotes) && quotes === true) {
+      val = "'" + val + "'";
     }
   }
   return val;
+}
+
+
+// Sort By Col
+// -- given a column name, update the table settings and trigger a resorting
+// 
+function sortByCol(col) {
+  if (V.sortAscending) {
+    V.sortAscending = false;
+  } else {
+    V.sortAscending = true;
+  }
+
+  V.sort = col;
+  update_view();
 }
 
 
@@ -1622,7 +1626,7 @@ function prep_exports() {
 // -- utility to generate a safe file name for exports
 function export_name(tag) {
   var timestr = file_format(G.timestamp);
-  return "CSView-" + tag + "-" + timestr + ".csv";
+  return C.textFilePrefix + "-" + tag + "-" + timestr + ".csv";
 }
 
 
@@ -1643,20 +1647,7 @@ function filters_to_text() {
     var mess = '';
     mess += f.field + " ";
     mess += C.ops.find(testFn(f.op, 'op')).text + " ";
-    // ACA: call stringify()?
-    var info = V.info.find(testFn(f.field, 'quick'));
-    switch (info.type) {
-      case 'number':
-        mess += f.value.toString();
-        break;
-      case 'date':
-        var x = new Date();
-        x.setTime(f.value);
-        mess += info.dateFormat(x);
-        break;
-      default:
-        mess += "'" + f.value + "'";
-    }
+    mess += stringify(f.value, f.field);
     return mess;
   }
 
