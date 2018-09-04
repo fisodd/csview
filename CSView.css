@@ -143,6 +143,8 @@ pre {
 }
 table.result-table {
 	font-family: "Inconsolata", monospace;
+        border-collapse: collapse;
+        border-spacing: 0;
 }
 table.result-table th:hover {
 	background: #ccc;
@@ -161,7 +163,14 @@ table.result-table tr:nth-of-type(odd) {
 }
 table.result-table th,
 table.result-table td {
-	border: none;
+	border: solid 2px #fff;
+}
+table.result-table td.summary {
+	background: #ccc;
+	border-left: solid 2px #fff;
+	border-right: solid 2px #fff;
+        border-bottom: none;
+        border-top: none;
 }
 
 div.tooltip {

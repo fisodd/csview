@@ -21,6 +21,9 @@ C.strings = {
   'titleColFormat' : "Format to use if parsing this column as a date",
   'titleChangeFont': "Shrink or restore font size in table",
   'textChangeFont' : "Change font size",
+  'titleSummaryPct': "0%, 25%, 50%, 75%, 100% percentile values",
+  'titleChangePct' : "Display (or not) summary with 0%, 25%, 50%, 75%, 100% values",
+  'textChangePct'  : "Summarize quartiles",
   'titleRowLimit'  : "Limit of number of rows to format and display",
   'textRowLimit'   : "Row limit",
   'textBadViewer'  : "Invalid type of viewer specified.  Perhaps application state is corrupt?",
@@ -37,6 +40,9 @@ C.strings = {
   'textChartWith'  : " with ",
   'textChartOver'  : " over ",
   'textFilterWhere': " where ",
+  'textTruncated1' : "Table display truncated at ",
+  'textTruncated2' : " lines.",
+  'titleTruncated' : "Change the 'Row limit' setting in the 'Views' control to enable display of more (or less) rows",
   'textFilePrefix' : "CSView",
 
   'baseField' : "Criteria: Field...",
@@ -77,8 +83,8 @@ C.dialogs = [
 ];
 C.palettes = [
   'Monochrome',
-  'Viridis',
-  'Rainbow'
+  'Rainbow',
+  'Viridis'
 //  'Cool', 'Warm',
 //  'Viridis', 'Magma', 'Inferno', 'Plasma',
 //  'Blues', 'Greens', 'Greys', 'Oranges', 'Purples', 'Reds',
@@ -99,6 +105,8 @@ C.rowlimit = 100;        // limit tables to this many rows by default
 C.showFirst = 5;        // show the first N cols by default
 
 C.exportOpts = { type: 'text/csv;charset=utf-8' };
+
+C.percentiles = [0.00, 0.25, 0.50, 0.75, 1.00];
 
 
 
@@ -521,7 +529,7 @@ function op_flipshow() {
 
   V.info[idx].show = current === 'show' ? 'hide' : 'show';
 
-  var div = d3.select('div.columns');
+  var div = d3.select('#columns');
   div.selectAll('button.input-select')
     .filter(testFn(idx, 'idx'))
     .classed('input-show', current !== 'show')
@@ -776,6 +784,25 @@ function make_viewers() {
   var box;      // div containing elements being created
   var e;        // element being created
 
+  if (!isValid(V.percentiles)) {
+    V.percentiles = false;
+  }
+  box = div.append('div')
+    .classed('view-setting', true)
+    .attr('id', 'table-percentiles')
+  ;
+  e = box.append('div')
+    .classed('inline', true)
+    .attr('title', C.strings.titleChangePct)
+    .text(C.strings.textChangePct)
+  ;
+  e.append('button')
+    .classed('table-toggle inline clickable', true)
+    .attr('id', 'button-percentiles')
+    .text("\u2612")
+    .on('click', toggle_percentiles)
+  ;
+
   if (!isValid(V.tableSqueeze)) {
     V.tableSqueeze = false;
   }
@@ -790,6 +817,7 @@ function make_viewers() {
   ;
   e.append('button')
     .classed('table-toggle inline clickable', true)
+    .attr('id', 'button-squeeze')
     .text("\u25bc")
     .on('click', table_toggle)
   ;
@@ -868,10 +896,25 @@ function change_limit() {
 }
 
 
+// Toggle Percentiles
+// -- toggle display (or not) of summary percentiles
+function toggle_percentiles() {
+  var here = d3.select('#button-percentiles');
+  if (V.percentiles === true) {
+    V.percentiles = false;
+    here.text("\u2612");
+  } else {
+    V.percentiles = true;
+    here.text("\u2611");
+  }
+  update_view();
+}
+
+
 // Table Toggle
 // -- change size of font in table (smash)
 function table_toggle() {
-  var here = d3.select('div.view-label#Table').select('button.table-toggle');
+  var here = d3.select('#button-squeeze');
   var there = d3.select('table.result-table');
   if (there.classed('smashed') === true) {
     there.classed('smashed', false);
@@ -1132,6 +1175,7 @@ function tabulate() {
     title += C.strings.textRecordAll + length + C.strings.textRecordEnd;
   }
   var tabledata = G.rows.slice(0, V.rowlimit);
+  var truncated = G.rows.length > tabledata.length;
 
   // Take away any existing table or text
   d3.select('div.display').selectAll('*')
@@ -1171,6 +1215,29 @@ function tabulate() {
       .on('click', sortByCol)
   ;
 
+  // append stats to the header
+  if (V.percentiles && isValid(G.stats)) {
+    var statlines = thead.selectAll('tr')
+      .data(G.stats)
+      .enter()
+      .append('tr')
+      .attr('title', C.strings.titleSummaryPct)
+    ;
+    statlines.selectAll('td')
+      .data(function (row) {
+        return columns.map(function (col) {
+          var val = stringify(row[col], col);
+          return {column: col, value: val};
+        });
+      })
+      .enter()
+        .append('td')
+        .classed('summary', true)
+        .text(getFn('value'))
+    ;
+  }
+
+
   // create a row for each object in the data
   var rows = tbody.selectAll('tr')
     .data(tabledata)
@@ -1190,6 +1257,16 @@ function tabulate() {
       .append('td')
       .text(getFn('value'))
   ;
+
+  if (truncated) {
+    var mess = C.strings.textTruncated1
+      + V.rowlimit
+      + C.strings.textTruncated2;
+    d3.select('div.display').append('p')
+      .attr('title', C.strings.titleTruncated)
+      .text(mess)
+    ;
+  }
 
 }
 
@@ -1336,21 +1413,24 @@ function visualize() {
 
   var xExtent = d3.extent(G.rows, function(d) { return +d[xCol]; });
   var yExtent = d3.extent(G.rows, function(d) { return +d[yCol]; });
-  var cExtent = d3.extent(G.rows, function(d) { return +d[cCol]; });
+  var cExtent;
   xScale = xScale.domain(xExtent).range([0, G.widthPlot]);
   yScale = yScale.domain(yExtent).range([G.heightPlot-G.marginT, G.marginT]);
 
   var color_interpolator = d3['interpolate' + V.palette];
   if (ctype === 'string') {
     G.cset = G.rows
-      .map(getFn('cCol'))
+      .map(getFn(cCol))
       .sort(d3.ascending)
       .reduce(function(arr,elem) {
         // push elem on array if it is not the same as the last in the array
         if (arr.slice(-1)[0] !== elem) { arr.push(elem); }
         return arr;
-      }, []);
+      }, [])
+    ;
     cExtent = [0, G.cset.length];
+  } else {
+    cExtent = d3.extent(G.rows, function(d) { return +d[cCol]; });
   }
   cScale = d3.scaleSequential(color_interpolator);
   cScale = cScale.domain(cExtent);
@@ -1538,6 +1618,7 @@ function visualize() {
 function update_view() {
   G.rows = parse_data(G.data);  // reparse data (if cols changed)
   check_filters();              // refilter data (if filters changed)
+  G.stats = calc_stats();       // generate stats on current data
   sort_rows(V.sort);
 
   switch (V.view) {
@@ -1626,7 +1707,7 @@ function prep_exports() {
 // -- utility to generate a safe file name for exports
 function export_name(tag) {
   var timestr = file_format(G.timestamp);
-  return C.textFilePrefix + "-" + tag + "-" + timestr + ".csv";
+  return C.strings.textFilePrefix + "-" + tag + "-" + timestr + ".csv";
 }
 
 
@@ -1793,6 +1874,21 @@ function run_filters(list, and) {
 // Sort Rows
 // -- sort rows based on field
 //
+function sort_rows(col) {
+  if (isUseful(col)) {
+    var info = V.info.find(testFn(col, 'quick'));
+    switch (info.type) {
+      case 'date':
+      case 'number':
+        sort_rows_num(col);
+        break;
+      default:
+        sort_rows_str(col);
+    }
+  }
+}
+
+
 function sort_rows_num(d) {
   if (V.sortAscending) {
     G.rows.sort(function(a, b) { return a[d] - b[d]; });
@@ -1809,20 +1905,64 @@ function sort_rows_str(d) {
   }
 }
 
-function sort_rows(col) {
-  if (isUseful(col)) {
-    var info = V.info.find(testFn(col, 'quick'));
-    switch (info.type) {
-      case 'date':
-      case 'number':
-        sort_rows_num(col);
-        break;
-      default:
-        sort_rows_str(col);
-    }
-  }
-}
 
+
+//
+// Stats
+//
+
+// Calc Stats
+// -- calculate 0,25,50,75,100 percentiles of provided data
+//
+function calc_stats() {
+  if (!isValid(G.rows)) {
+    return null;
+  }
+  var last = G.rows.length - 1;
+  if (last < 0) {
+    return null;
+  }
+
+  var statsByCol = Object.keys(G.rows[0]).map(function(d) {
+    var vals = [];
+    var percentiles = [];
+    var info = V.info.find(testFn(d, 'quick'));
+    if (info.show === 'show') {
+      vals = G.rows.map(getFn(d));
+      switch (info.type) {
+        case 'date':
+        case 'number':
+          vals.sort(function(a,b) { return a - b; });
+          break;
+        default:
+          vals.sort();
+      }
+      percentiles = C.percentiles.map(function(e) {
+	var pos = Math.floor(e * last);
+	return vals[pos];
+      });
+    }
+
+    return percentiles;
+  });
+
+  var columns = V.info.map(getFn('quick'));
+  var rowOfHeaders = {};
+  columns.map(function(e) {
+    rowOfHeaders[e] = e;
+  });
+  var statsByRow = C.percentiles.map(function(d,i) {
+    var obj = {};
+    columns.map(function(e,j) {
+      var val = statsByCol[j][i];
+      obj[e] = val;
+    });
+    return obj;
+  });
+  statsByRow.unshift(rowOfHeaders);
+
+  return statsByRow;
+}
 
 
 
@@ -1834,7 +1974,7 @@ function sort_rows(col) {
 // -- return a copy of the array with elements of objects in native form
 function parse_data(data) {
   return data.map(function(d) {
-  var o = {};
+    var obj = {};
     Object.keys(d).map(function(e) {
       var info = V.info.find(testFn(e, 'quick'));
       var val;
@@ -1855,9 +1995,9 @@ function parse_data(data) {
       default:
         val = d[e];
       }
-      o[e] = val;
+      obj[e] = val;
     });
-    return o;
+    return obj;
   });
 }
 
